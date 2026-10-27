@@ -22,14 +22,26 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:gravity="center"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:padding="16dp">
 
         <Button
             android:id="@+id/captureButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
             android:text="拍照" />
+
+        <TextView
+            android:id="@+id/resultTextView"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="16dp"
+            android:layout_weight="1"
+            android:gravity="top|start"
+            android:scrollbars="vertical"
+            android:text="识别结果将显示在这里"
+            android:textSize="16sp" />
     </LinearLayout>
 
 </LinearLayout>
