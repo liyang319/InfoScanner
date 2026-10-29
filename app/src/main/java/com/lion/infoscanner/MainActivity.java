@@ -8,10 +8,9 @@ import android.graphics.Matrix;
 import android.media.ExifInterface;
 import android.os.Bundle;
 import android.os.Environment;
-import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
 import android.widget.Button;
-import android.widget.TextView;
+import android.widget.EditText;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -44,10 +43,12 @@ public class MainActivity extends AppCompatActivity {
 
     private PreviewView viewFinder;
     private ImageCapture imageCapture;
-    private TextView resultTextView;
+    private EditText resultEditText;
 
     private final ExecutorService ocrExecutor = Executors.newSingleThreadExecutor();
     private OcrEngine ocrEngine;
+    private String ocrInitError;
+    private boolean capturing = false;
 
     private final ActivityResultLauncher<String> requestPermissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
@@ -64,11 +65,13 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         viewFinder = findViewById(R.id.viewFinder);
-        resultTextView = findViewById(R.id.resultTextView);
-        resultTextView.setMovementMethod(new ScrollingMovementMethod());
+        resultEditText = findViewById(R.id.resultEditText);
 
         Button captureButton = findViewById(R.id.captureButton);
         captureButton.setOnClickListener(v -> takePhoto());
+
+        Button clearButton = findViewById(R.id.clearButton);
+        clearButton.setOnClickListener(v -> resultEditText.setText(""));
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                 == PackageManager.PERMISSION_GRANTED) {
@@ -104,15 +107,22 @@ public class MainActivity extends AppCompatActivity {
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture);
             } catch (ExecutionException | InterruptedException e) {
-                Toast.makeText(this, "启动相机失败", Toast.LENGTH_SHORT).show();
+                imageCapture = null;
+                Toast.makeText(this, "启动相机失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
         }, ContextCompat.getMainExecutor(this));
     }
 
     private void takePhoto() {
         if (imageCapture == null) {
+            Toast.makeText(this, "相机尚未就绪，请稍候再试", Toast.LENGTH_SHORT).show();
             return;
         }
+        if (capturing) {
+            Toast.makeText(this, "正在处理中，请稍候", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        capturing = true;
 
         File photoFile = new File(getOutputDirectory(),
                 new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date()) + ".jpg");
@@ -124,16 +134,18 @@ public class MainActivity extends AppCompatActivity {
                 new ImageCapture.OnImageSavedCallback() {
                     @Override
                     public void onImageSaved(ImageCapture.OutputFileResults results) {
+                        capturing = false;
                         Toast.makeText(MainActivity.this,
                                 "照片已保存: " + photoFile.getAbsolutePath(), Toast.LENGTH_SHORT).show();
-                        resultTextView.setText("识别中...");
+                        resultEditText.setText("识别中...");
                         recognizePhoto(photoFile);
                     }
 
                     @Override
                     public void onError(ImageCaptureException exception) {
+                        capturing = false;
                         Toast.makeText(MainActivity.this,
-                                "拍照失败: " + exception.getMessage(), Toast.LENGTH_SHORT).show();
+                                "拍照失败: " + exception.getMessage(), Toast.LENGTH_LONG).show();
                     }
                 });
     }
@@ -144,8 +156,10 @@ public class MainActivity extends AppCompatActivity {
         }
         try {
             ocrEngine = new OcrEngine(getApplicationContext());
+            ocrInitError = null;
         } catch (Exception e) {
             Log.e(TAG, "OCR engine init failed", e);
+            ocrInitError = e.getMessage();
         }
     }
 
@@ -157,39 +171,44 @@ public class MainActivity extends AppCompatActivity {
                 engine = ocrEngine;
             }
             if (engine == null) {
-                runOnUiThread(() -> {
-                    resultTextView.setText("OCR 引擎初始化失败");
-                    Toast.makeText(this, "OCR 引擎初始化失败", Toast.LENGTH_SHORT).show();
-                });
+                String reason = ocrInitError != null ? ocrInitError : "未知原因";
+                showResult("OCR 引擎初始化失败: " + reason);
                 return;
             }
 
             Bitmap input = decodeSampledBitmap(photoFile.getAbsolutePath(), 2000, 2000);
             if (input == null) {
-                runOnUiThread(() -> resultTextView.setText("图片解码失败"));
+                showResult("图片解码失败");
                 return;
             }
 
-            String text = "";
+            String text = null;
+            String error = null;
             try {
                 Bitmap output = input.copy(Bitmap.Config.ARGB_8888, true);
                 OcrResult result = engine.detect(input, output, 0);
                 text = result != null ? result.getStrRes() : "";
             } catch (Exception e) {
                 Log.e(TAG, "OCR detect failed", e);
+                error = e.getMessage();
             } finally {
                 input.recycle();
             }
 
-            final String display = text;
-            runOnUiThread(() -> {
-                if (display == null || display.isEmpty()) {
-                    resultTextView.setText("未识别到文字");
-                } else {
-                    resultTextView.setText(display);
-                }
-            });
+            final String display;
+            if (error != null) {
+                display = "识别失败: " + error;
+            } else if (text == null || text.isEmpty()) {
+                display = "未识别到文字";
+            } else {
+                display = text;
+            }
+            showResult(display);
         });
+    }
+
+    private void showResult(String text) {
+        runOnUiThread(() -> resultEditText.setText(text));
     }
 
     private Bitmap decodeSampledBitmap(String path, int maxWidth, int maxHeight) {
